@@ -54,7 +54,6 @@ func (e *threemaEncryption) encrypt(content []byte, publicKey *[32]byte) (*Box, 
 func encrypt(m []byte, n *[24]byte, pk *[32]byte, sk *[32]byte) (c []byte, err error) {
 	var result []byte
 	result = box.Seal(result, m, n, pk, sk)
-	println(hex.EncodeToString(result))
 	return result, nil
 }
 
