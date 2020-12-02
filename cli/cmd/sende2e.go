@@ -3,11 +3,11 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"github.com/coffeemakr/threema/gateway"
 	"io/ioutil"
 	"log"
 	"os"
 
-	"github.com/coffeemakr/threema"
 	"github.com/spf13/cobra"
 )
 
@@ -25,32 +25,16 @@ var e2eCmd = &cobra.Command{
 		secret := args[2]
 		privateKey := args[3]
 
-		encryption, err := threema.ThreemaEncryption(privateKey)
-		if err != nil {
-			log.Fatalln(err)
-		}
 		reader := bufio.NewReader(os.Stdin)
 		message, err := ioutil.ReadAll(reader)
 		if err != nil {
 			log.Fatalln(err)
 		}
-
-		client := threema.GatewayClient{
-			Secret: secret,
-			ID:     from,
-		}
-
-		publicKey, err := client.LookupPublicKey(to)
+		client, err := gateway.NewEncryptedClient(from, secret, privateKey)
 		if err != nil {
 			log.Fatalln(err)
 		}
-
-		encrypted, err := encryption.EncryptText(string(message[:]), publicKey)
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		messageID, err := client.SendMessage(to, encrypted)
+		messageID, err := client.SendTextMessage(to, string(message))
 		if err != nil {
 			log.Fatalln(err)
 		}
