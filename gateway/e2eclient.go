@@ -1,5 +1,10 @@
 package gateway
 
+import (
+	"io/ioutil"
+	"os"
+)
+
 type EncryptedClient struct {
 	Client *Client
 	EncryptionHelper EncryptionHelper
@@ -24,29 +29,74 @@ func NewEncryptedClient(threemaId string, apiSecret string, secretKeyHex string)
 	}, nil
 }
 
-func (c *EncryptedClient) SendTextMessage(recipientID string, textMessage string) (messageId string, err error) {
+func (c *EncryptedClient) SendTextMessage(recipientID string, message string) (messageId string, err error) {
+	return c.SendMessage(recipientID, TextMessage{ []byte(message) })
+}
+
+func (c *EncryptedClient) SendImage(recipientID string, filename string) (messageId string, err error) {
+	var file *os.File
+	var content []byte
 	var publicKey *PublicKey
-	var message *EncryptedMessage
+
+	if publicKey, err = c.LookupPublicKey(recipientID); err != nil {
+		return
+	}
+
+	if file, err = os.Open(filename); err != nil {
+		return
+	}
+	if content, err = ioutil.ReadAll(file); err != nil {
+		_ = file.Close()
+		return
+	}
+	if err = file.Close(); err != nil {
+		return
+	}
+	imageMessage, err := c.EncryptionHelper.EncryptBytes(content, publicKey)
+	if err != nil {
+		return "", err
+	}
+
+	blobID, size, err := c.Client.UploadBlob(imageMessage.Box)
+	if err != nil {
+		return "", err
+	}
+	message := &ImageMessage{
+		BlobID: blobID,
+		Size:   uint32(size),
+		Nonce:  imageMessage.Nonce,
+	}
+	return c.SendMessage(recipientID, message)
+}
+
+func (c *EncryptedClient) LookupPublicKey(recipientID string) (publicKey *PublicKey, err error) {
 	if c.PublicKeyStore != nil {
 		publicKey = (*c.PublicKeyStore).FetchPublicKey(recipientID)
 	}
-	if publicKey == nil {
-		publicKey, err = c.Client.LookupPublicKey(recipientID)
-		if err != nil {
-			return
-		}
-		if c.PublicKeyStore != nil {
-			err = (*c.PublicKeyStore).SavePublicKey(recipientID, publicKey)
-			if err != nil {
-				return
-			}
-		}
+	if publicKey != nil {
+		return
 	}
-	message, err = c.EncryptionHelper.EncryptText(textMessage, publicKey)
+	publicKey, err = c.Client.LookupPublicKey(recipientID)
 	if err != nil {
 		return
 	}
-	return c.Client.SendEncryptedMessage(recipientID, message)
+	if c.PublicKeyStore != nil {
+		err = (*c.PublicKeyStore).SavePublicKey(recipientID, publicKey)
+	}
+	return
+}
+
+func (c *EncryptedClient) SendMessage(recipientID string, message Message) (messageId string, err error) {
+	var publicKey *PublicKey
+	var encryptedMessage *EncryptedMessage
+	if publicKey, err = c.LookupPublicKey(recipientID); err != nil {
+		return
+	}
+	encryptedMessage, err = c.EncryptionHelper.EncryptMessage(message, publicKey)
+	if err != nil {
+		return
+	}
+	return c.Client.SendEncryptedMessage(recipientID, encryptedMessage)
 }
 
 

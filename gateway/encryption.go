@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-
 	"golang.org/x/crypto/nacl/box"
 )
 
@@ -34,15 +33,15 @@ func checkIdentity(value string) error {
 }
 
 type EncryptionHelper interface {
-	EncryptTextBytes(message []byte, publicKey *PublicKey) (*EncryptedMessage, error)
-	EncryptText(message string, publicKey *PublicKey) (*EncryptedMessage, error)
+	EncryptMessage(message Message, publicKey *PublicKey) (*EncryptedMessage, error)
+	EncryptBytes(content []byte, publicKey *PublicKey) (*EncryptedMessage, error)
 }
 
 type encryptionHelper struct {
 	secretKey *SecretKey
 }
 
-func (e encryptionHelper) encrypt(content []byte, publicKey *PublicKey) (message *EncryptedMessage, err error) {
+func (e encryptionHelper) EncryptBytes(content []byte, publicKey *PublicKey) (message *EncryptedMessage, err error) {
 	var nonce *Nonce
 	var boxBytes []byte
 
@@ -124,14 +123,10 @@ type EncryptedMessage struct {
 	Box   []byte
 }
 
-func (e *encryptionHelper) EncryptTextBytes(message []byte, publicKey *PublicKey) (*EncryptedMessage, error) {
-	plaintextBytes, err := PackTextMessage(message)
+func (e *encryptionHelper)  EncryptMessage(message Message, publicKey *PublicKey)  (*EncryptedMessage, error) {
+	plaintextBytes, err := message.Pack()
 	if err != nil {
 		return nil, err
 	}
-	return e.encrypt(plaintextBytes, publicKey)
-}
-
-func (e *encryptionHelper) EncryptText(message string, publicKey *PublicKey) (*EncryptedMessage, error) {
-	return e.EncryptTextBytes([]byte(message), publicKey)
+	return e.EncryptBytes(plaintextBytes, publicKey)
 }

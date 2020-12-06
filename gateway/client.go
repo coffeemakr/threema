@@ -1,18 +1,31 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"math/rand"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 
 type Client struct {
 	Secret         string
 	ID             string
+	Client *http.Client
+}
+
+func (c *Client) client() *http.Client{
+	if c.Client != nil {
+		return c.Client
+	}
+	return http.DefaultClient
 }
 
 var (
@@ -21,7 +34,9 @@ var (
 	ErrRequestFailed = errors.New("request failed")
 	ErrInvalidRecipient = errors.New("recipient identity is invalid or the account is not set up for end-to-end mode")
 	ErrMessageTooLong = errors.New("message is too long")
+	ErrBlobTooBig = errors.New("blob is too big")
 	ErrInternalServerError = errors.New("temporary server error")
+	ErrMissingCredits = errors.New("missing credits")
 )
 
 // Lookup the public key of the Threema identity.
@@ -30,7 +45,7 @@ func (c *Client) LookupPublicKey(threemaID string) (pk *PublicKey, err error) {
 	if err = checkIdentity(threemaID); err != nil {
 		return
 	}
-	response, err := http.Get(fmt.Sprintf("https://msgapi.threema.ch/pubkeys/%s?from=%s&secret=%s",
+	response, err := c.client().Get(fmt.Sprintf("https://msgapi.threema.ch/pubkeys/%s?from=%s&secret=%s",
 		url.PathEscape(threemaID), url.QueryEscape(c.ID), url.QueryEscape(c.Secret)))
 	if err != nil {
 		return nil, err
@@ -42,8 +57,8 @@ func (c *Client) LookupPublicKey(threemaID string) (pk *PublicKey, err error) {
 			if err == nil {
 				pk, err = ReadHexPublicKey(string(body[:]))
 			}
-			if err == nil {
-				err = response.Body.Close()
+			if closeErr := response.Body.Close(); closeErr != nil && err == nil{
+				err = closeErr
 			}
 		}
 	case http.StatusNotFound:
@@ -61,7 +76,7 @@ func (c *Client) LookupPublicKey(threemaID string) (pk *PublicKey, err error) {
 // Send the message and returns the message ID
 func (c *Client) SendEncryptedMessage(to string, box *EncryptedMessage) (messageId string, err error) {
 	var resp *http.Response
-	resp, err = http.PostForm("https://msgapi.threema.ch/send_e2e",
+	resp, err = c.client().PostForm("https://msgapi.threema.ch/send_e2e",
 		url.Values{"from": {c.ID},
 			"to":     {to},
 			"nonce":  {hex.EncodeToString((*box.Nonce)[:])},
@@ -74,14 +89,13 @@ func (c *Client) SendEncryptedMessage(to string, box *EncryptedMessage) (message
 	case http.StatusOK:
 		{
 			var bodyBytes []byte
-			if resp.StatusCode != 200 {
-				return "", fmt.Errorf("Reqeust failed: %s", resp.Status)
-			}
 			bodyBytes, err = ioutil.ReadAll(resp.Body)
 			if err == nil {
 				messageId = string(bodyBytes[:])
 			}
-			err = resp.Body.Close()
+			if closeErr := resp.Body.Close(); closeErr != nil && err == nil{
+				err = closeErr
+			}
 		}
 	case http.StatusBadRequest:
 		err = ErrInvalidRecipient
@@ -91,6 +105,109 @@ func (c *Client) SendEncryptedMessage(to string, box *EncryptedMessage) (message
 		err = ErrBadSecret
 	case http.StatusInternalServerError:
 		err = ErrInternalServerError
+	case 402:
+		err = ErrMissingCredits
+	default:
+		err = ErrRequestFailed
+	}
+	return
+}
+
+
+func randomBoundary() string {
+	var length = 32
+	charSet := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567889-_")
+	result := make([]byte, length)
+	for i := 0; i < length; i++ {
+		random := rand.Intn(len(charSet))
+		randomChar := charSet[random]
+		result[i] = randomChar
+	}
+	return string(result)
+}
+
+func transformToMultipart(fileReader io.Reader) (string, io.Reader) {
+	boundary := randomBoundary()
+	fileFormat := "--%s\r\nContent-Disposition: form-data; name=\"blob\"\r\n\"Content-type: application/octet-stream\"\r\n\r\n"
+	filePart := fmt.Sprintf(fileFormat, boundary)
+	bodyBottom := fmt.Sprintf("\r\n--%s--\r\n", boundary)
+	body := io.MultiReader(strings.NewReader(filePart), fileReader, strings.NewReader(bodyBottom))
+	contentType := fmt.Sprintf("multipart/form-data; boundary=%s", boundary)
+	return contentType, body
+}
+
+func readBlobID(reader io.Reader) (blobID *BlobID, err error){
+	var bodyBytes = make([]byte, 32)
+	var bytesRead int
+	bytesRead, err = io.ReadAtLeast(reader, bodyBytes, 32)
+	if err != nil {
+		return
+	}
+	if bytesRead != 32 {
+		err = errors.New("received invalid response")
+		return
+	}
+	var bytesWritten int
+	blobID = new([16]byte)
+	bytesWritten, err = hex.Decode(blobID[:], bodyBytes)
+	if err == nil && bytesWritten != 16 {
+		err = errors.New("received invalid response")
+	}
+	return
+}
+
+// Send the message and returns the message ID
+func (c *Client) UploadBlob(blob []byte) (blobID *BlobID, size int64, err error) {
+	var resp *http.Response
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("blob", "blob")
+	if err != nil {
+		return
+	}
+	_, err = part.Write(blob)
+	if err != nil {
+		return
+	}
+	err = writer.Close()
+	if err != nil {
+		return
+	}
+	//contentType, requestBody := transformToMultipart(blobBody)
+	request, err := http.NewRequest("POST", "https://msgapi.threema.ch/upload_blob", body)
+	if err != nil {
+		return
+	}
+	q := request.URL.Query()
+	q.Add("secret", c.Secret)
+	q.Add("from", c.ID)
+	request.URL.RawQuery = q.Encode()
+
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err = c.client().Do(request)
+	if err != nil {
+		return
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		{
+			blobID, err = readBlobID(resp.Body)
+			if closeErr := resp.Body.Close(); closeErr != nil && err == nil{
+				err = closeErr
+			}
+		}
+	case http.StatusBadRequest:
+		err = ErrInvalidRecipient
+	case http.StatusRequestEntityTooLarge:
+		err = ErrBlobTooBig
+	case http.StatusUnauthorized:
+		err = ErrBadSecret
+	case http.StatusInternalServerError:
+		err = ErrInternalServerError
+	case 402:
+		err = ErrMissingCredits
 	default:
 		err = ErrRequestFailed
 	}
