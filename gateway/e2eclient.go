@@ -1,14 +1,32 @@
 package gateway
 
 import (
+	"io"
 	"io/ioutil"
+	"mime"
 	"os"
+	"path"
 )
 
 type EncryptedClient struct {
-	Client *Client
+	Client           *Client
 	EncryptionHelper EncryptionHelper
-	PublicKeyStore *PublicKeyStore
+	PublicKeyStore   PublicKeyStore
+}
+
+type nopKeyStore struct {}
+func (nopKeyStore) FetchPublicKey(threemaID string) *PublicKey {
+	return nil
+}
+func (nopKeyStore) SavePublicKey(threemaID string, publicKey *PublicKey) error {
+	return nil
+}
+
+func (c *EncryptedClient) keystore() PublicKeyStore  {
+	if c.PublicKeyStore == nil {
+		return nopKeyStore{}
+	}
+	return c.PublicKeyStore
 }
 
 func NewEncryptedClient(threemaId string, apiSecret string, secretKeyHex string) (*EncryptedClient, error) {
@@ -21,7 +39,7 @@ func NewEncryptedClient(threemaId string, apiSecret string, secretKeyHex string)
 		return nil, err
 	}
 	return &EncryptedClient{
-		Client:           &Client{
+		Client: &Client{
 			Secret: apiSecret,
 			ID:     threemaId,
 		},
@@ -30,7 +48,34 @@ func NewEncryptedClient(threemaId string, apiSecret string, secretKeyHex string)
 }
 
 func (c *EncryptedClient) SendTextMessage(recipientID string, message string) (messageId string, err error) {
-	return c.SendMessage(recipientID, TextMessage{ []byte(message) })
+	return c.SendMessage(recipientID, TextMessage{[]byte(message)})
+}
+
+type BlobReference struct {
+	BlobID *BlobID
+	Size   uint32
+	Nonce  *Nonce
+}
+
+var FileNonce = &[24]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
+var ThumbnailNonce = &[24]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}
+
+// Upload a plaintext blob to the gateway. nonce can be nil, for random nonce
+func (c *EncryptedClient) UploadFile(reader io.Reader, sharedKey *SharedKey, nonce *Nonce) (*BlobReference, error) {
+	var err error
+
+	var content []byte
+	if content, err = ioutil.ReadAll(reader); err != nil {
+		return nil, err
+	}
+
+	box := EncryptWithSharedKey(content, sharedKey, nonce)
+	blobID, err := c.Client.UploadBlob(box)
+	return &BlobReference{
+		BlobID: blobID,
+		Size:   uint32(len(content)),
+		Nonce:  nonce,
+	}, nil
 }
 
 func (c *EncryptedClient) SendImage(recipientID string, filename string) (messageId string, err error) {
@@ -49,6 +94,7 @@ func (c *EncryptedClient) SendImage(recipientID string, filename string) (messag
 		_ = file.Close()
 		return
 	}
+	size := uint32(len(content))
 	if err = file.Close(); err != nil {
 		return
 	}
@@ -57,13 +103,13 @@ func (c *EncryptedClient) SendImage(recipientID string, filename string) (messag
 		return "", err
 	}
 
-	blobID, size, err := c.Client.UploadBlob(imageMessage.Box)
+	blobID, err := c.Client.UploadBlob(imageMessage.Box)
 	if err != nil {
 		return "", err
 	}
 	message := &ImageMessage{
 		BlobID: blobID,
-		Size:   uint32(size),
+		Size:   size,
 		Nonce:  imageMessage.Nonce,
 	}
 	return c.SendMessage(recipientID, message)
@@ -71,7 +117,7 @@ func (c *EncryptedClient) SendImage(recipientID string, filename string) (messag
 
 func (c *EncryptedClient) LookupPublicKey(recipientID string) (publicKey *PublicKey, err error) {
 	if c.PublicKeyStore != nil {
-		publicKey = (*c.PublicKeyStore).FetchPublicKey(recipientID)
+		publicKey = c.keystore().FetchPublicKey(recipientID)
 	}
 	if publicKey != nil {
 		return
@@ -81,7 +127,7 @@ func (c *EncryptedClient) LookupPublicKey(recipientID string) (publicKey *Public
 		return
 	}
 	if c.PublicKeyStore != nil {
-		err = (*c.PublicKeyStore).SavePublicKey(recipientID, publicKey)
+		err = c.keystore().SavePublicKey(recipientID, publicKey)
 	}
 	return
 }
@@ -99,13 +145,12 @@ func (c *EncryptedClient) SendMessage(recipientID string, message Message) (mess
 	return c.Client.SendEncryptedMessage(recipientID, encryptedMessage)
 }
 
-
 type PublicKeyStore interface {
 	FetchPublicKey(threemaID string) *PublicKey
 	SavePublicKey(threemaID string, publicKey *PublicKey) error
 }
 
-type inMemoryStore map[string] *PublicKey
+type inMemoryStore map[string]*PublicKey
 
 func (s inMemoryStore) FetchPublicKey(threemaID string) (pk *PublicKey) {
 	return s[threemaID]
@@ -117,4 +162,107 @@ func (s inMemoryStore) SavePublicKey(threemaID string, publicKey *PublicKey) err
 
 func NewInMemoryStore() PublicKeyStore {
 	return inMemoryStore(make(map[string]*PublicKey))
+}
+
+type File interface {
+	Name() string
+	Open() (io.ReadCloser, error)
+	MimeType() string
+	HasThumbnail() bool
+	OpenThumbnail() (io.ReadCloser, error)
+}
+
+type FilePath struct {
+	Path          string
+	ThumbnailPath string
+}
+
+func (s FilePath) Open() (io.ReadCloser, error) {
+	return os.Open(s.Path)
+}
+
+func (s FilePath) OpenThumbnail() (io.ReadCloser, error) {
+	return os.Open(s.ThumbnailPath)
+}
+
+func (s FilePath) MimeType() string {
+	return mime.TypeByExtension(path.Ext(s.Path))
+}
+
+func (s FilePath) Name() string  {
+	return path.Base(s.Path)
+}
+
+func (s FilePath) HasThumbnail() bool {
+	return s.ThumbnailPath != ""
+}
+
+func (c *EncryptedClient) PrepareFile(file File) (msg *FileMessage, err error) {
+	var reader io.ReadCloser
+	var blob *BlobReference
+	var thumbnailBlodID *BlobID
+	var sharedKey *SharedKey
+
+	if sharedKey, err = RandomSecretKey(); err != nil {
+		return
+	}
+
+	// Upload file
+	if reader, err = file.Open(); err != nil {
+		return
+	}
+	if blob, err = c.UploadFile(reader, sharedKey, FileNonce); err != nil {
+		_ = reader.Close()
+		return
+	}
+	if err = reader.Close(); err != nil {
+		return
+	}
+
+	// Upload thumbnail
+	if file.HasThumbnail() {
+		var thumbnailBlob *BlobReference
+		if reader, err = file.OpenThumbnail(); err != nil {
+			return
+		}
+		if thumbnailBlob, err = c.UploadFile(reader, sharedKey, ThumbnailNonce); err != nil {
+			_ = reader.Close()
+			return
+		}
+		if err = reader.Close(); err != nil {
+			return
+		}
+		thumbnailBlodID = thumbnailBlob.BlobID
+	}
+
+	mimeType := file.MimeType()
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	return &FileMessage{
+		FileID:      blob.BlobID,
+		ThumbnailID: thumbnailBlodID,
+		SharedKey:   sharedKey,
+		MimeType:    mimeType,
+		FileName:    file.Name(),
+		FileSize:    blob.Size,
+	}, nil
+}
+
+func (c *EncryptedClient) SendFile(recipientID string, file File, description string) (messageID string, err error) {
+	var message *FileMessage
+
+	// We lookup the public key first, because it doesn't use credits.
+	if _, err = c.LookupPublicKey(recipientID); err != nil {
+		return
+	}
+
+	message, err = c.PrepareFile(file)
+	if err != nil {
+		return
+	}
+	message.Description = description
+
+	return c.SendMessage(recipientID, message)
 }

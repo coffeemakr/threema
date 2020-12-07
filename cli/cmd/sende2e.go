@@ -28,15 +28,15 @@ var e2eCmd = &cobra.Command{
 		reader := bufio.NewReader(os.Stdin)
 		message, err := ioutil.ReadAll(reader)
 		if err != nil {
-			log.Fatalln(err)
+			fail(err)
 		}
 		client, err := gateway.NewEncryptedClient(from, secret, privateKey)
 		if err != nil {
-			log.Fatalln(err)
+			fail(err)
 		}
 		messageID, err := client.SendTextMessage(to, string(message))
 		if err != nil {
-			log.Fatalln(err)
+			fail(err)
 		}
 		fmt.Println(messageID)
 	},

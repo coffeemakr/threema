@@ -157,7 +157,7 @@ func readBlobID(reader io.Reader) (blobID *BlobID, err error){
 }
 
 // Send the message and returns the message ID
-func (c *Client) UploadBlob(blob []byte) (blobID *BlobID, size int64, err error) {
+func (c *Client) UploadBlob(blob []byte) (blobID *BlobID, err error) {
 	var resp *http.Response
 
 	body := &bytes.Buffer{}

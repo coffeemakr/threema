@@ -35,28 +35,31 @@ func checkIdentity(value string) error {
 type EncryptionHelper interface {
 	EncryptMessage(message Message, publicKey *PublicKey) (*EncryptedMessage, error)
 	EncryptBytes(content []byte, publicKey *PublicKey) (*EncryptedMessage, error)
+	EncryptBytesWithNonce(content []byte, publicKey *PublicKey, nonce *Nonce) (*EncryptedMessage, error)
 }
 
 type encryptionHelper struct {
 	secretKey *SecretKey
 }
 
-func (e encryptionHelper) EncryptBytes(content []byte, publicKey *PublicKey) (message *EncryptedMessage, err error) {
-	var nonce *Nonce
+func (e encryptionHelper) EncryptBytesWithNonce(content []byte, publicKey *PublicKey, nonce *Nonce)  (message *EncryptedMessage, err error) {
 	var boxBytes []byte
-
-	if nonce, err = CreateNonce(); err != nil {
-		return nil, err
-	}
 	if boxBytes, err = encrypt(content, nonce, publicKey, e.secretKey); err != nil {
 		return nil, err
 	}
 
-	message = &EncryptedMessage{
+	return &EncryptedMessage{
 		Nonce: nonce,
 		Box:   boxBytes,
+	}, nil
+}
+
+func (e encryptionHelper) EncryptBytes(content []byte, publicKey *PublicKey) (message *EncryptedMessage, err error) {
+	var nonce *Nonce
+	if nonce, err = CreateNonce(); err != nil {
+		return nil, err
 	}
-	return
+	return e.EncryptBytesWithNonce(content, publicKey, nonce)
 }
 
 func NewEncryptionHelper(secret string) (EncryptionHelper, error) {
