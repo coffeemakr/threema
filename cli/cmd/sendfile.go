@@ -30,7 +30,6 @@ var sendFile = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		client.PublicKeyStore = gateway.NewInMemoryStore()
 
 		file := &gateway.FilePath{
 			Path:          filePath,

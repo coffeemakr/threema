@@ -30,6 +30,7 @@ func (c *Client) client() *http.Client{
 
 var (
 	ErrIDNotFound    = errors.New("threema identity not found")
+	ErrBlobNotFound = errors.New("blob not found")
 	ErrBadSecret     = errors.New("api secret or identity is incorrect")
 	ErrRequestFailed = errors.New("request failed")
 	ErrInvalidRecipient = errors.New("recipient identity is invalid or the account is not set up for end-to-end mode")
@@ -136,24 +137,22 @@ func transformToMultipart(fileReader io.Reader) (string, io.Reader) {
 	return contentType, body
 }
 
+func ReadBlobID(hexString string) (*BlobID, error){
+	if len(hexString) != (blobIdBytes * 2) {
+		return nil, errors.New("invalid blob ID length")
+	}
+	blobID := new(BlobID)
+	_, err := hex.Decode(blobID[:], []byte(hexString))
+	return blobID, err
+}
+
 func readBlobID(reader io.Reader) (blobID *BlobID, err error){
-	var bodyBytes = make([]byte, 32)
-	var bytesRead int
-	bytesRead, err = io.ReadAtLeast(reader, bodyBytes, 32)
+	var bodyBytes = make([]byte, 0, blobIdBytes * 2)
+	_, err = io.ReadAtLeast(reader, bodyBytes, blobIdBytes * 2)
 	if err != nil {
 		return
 	}
-	if bytesRead != 32 {
-		err = errors.New("received invalid response")
-		return
-	}
-	var bytesWritten int
-	blobID = new([16]byte)
-	bytesWritten, err = hex.Decode(blobID[:], bodyBytes)
-	if err == nil && bytesWritten != 16 {
-		err = errors.New("received invalid response")
-	}
-	return
+	return ReadBlobID(string(bodyBytes))
 }
 
 // Send the message and returns the message ID
@@ -212,4 +211,30 @@ func (c *Client) UploadBlob(blob []byte) (blobID *BlobID, err error) {
 		err = ErrRequestFailed
 	}
 	return
+}
+
+func (c *Client) DownloadBlob(blobID *BlobID) ([]byte, error) {
+	resp, err := c.client().Get(fmt.Sprintf("https://msgapi.threema.ch/blobs/%s?from=%s&secret=%s",
+		hex.EncodeToString(blobID[:]),
+		url.QueryEscape(c.ID),
+		url.QueryEscape(c.Secret)))
+	if err != nil {
+		return nil, err
+	}
+	switch resp.StatusCode {
+	case http.StatusOK: {
+		result, err := ioutil.ReadAll(resp.Body)
+		if closeError := resp.Body.Close(); closeError != nil && err == nil {
+			err = closeError
+		}
+		return result, err
+	}
+	case http.StatusUnauthorized:
+		err = ErrBadSecret
+	case http.StatusNotFound:
+		err = ErrBlobNotFound
+	case http.StatusInternalServerError:
+		err = ErrInternalServerError
+	}
+	return nil, err
 }

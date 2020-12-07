@@ -1,9 +1,12 @@
 package callback
 
-import "time"
+import (
+	"github.com/coffeemakr/threema/gateway"
+	"time"
+)
 
-// CallbackValue is the received content from the Threema server
-type CallbackValue struct {
+// EncryptedMessage is the received content from the Threema server
+type EncryptedMessage struct {
 	// from sender identity (8 characters)
 	From string
 
@@ -11,13 +14,13 @@ type CallbackValue struct {
 	To string
 
 	// messageId message ID assigned by the sender (8 bytes, hex encoded)
-	MessageID []byte
+	MessageID *gateway.MessageID
 
 	// date message date set by the sender (UNIX timestamp)
 	Date time.Time
 
 	// nonce used for encryption (24 bytes, hex encoded)
-	Nonce []byte
+	Nonce *gateway.Nonce
 
 	// box encrypted message data (max. 4000 bytes, hex encoded)
 	Box []byte

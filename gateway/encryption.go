@@ -13,17 +13,20 @@ const (
 	cryptoBoxNonceBytes     = 24
 )
 
+
 var errWrongIdentityLength = errors.New("wrong identity length")
 var errWrongNonceLength = errors.New("wrong identity length")
 var errWrongSecretKeyLength = errors.New("wrong identity length")
 var errWrongPublicKeyLength = errors.New("wrong identity length")
-
+var errWrongMessageIdLength = errors.New("wrong message id length")
 // The SecretKey contains the private key of the sender
 type SecretKey = [cryptoBoxSecretKeyBytes]byte
 // The PublicKey contains the public key of the receiver
 type PublicKey = [cryptoBoxPublicKeyBytes]byte
 // The Nonce
 type Nonce = [cryptoBoxNonceBytes]byte
+
+
 
 func checkIdentity(value string) error {
 	if len(value) != 8 {
@@ -36,6 +39,9 @@ type EncryptionHelper interface {
 	EncryptMessage(message Message, publicKey *PublicKey) (*EncryptedMessage, error)
 	EncryptBytes(content []byte, publicKey *PublicKey) (*EncryptedMessage, error)
 	EncryptBytesWithNonce(content []byte, publicKey *PublicKey, nonce *Nonce) (*EncryptedMessage, error)
+	DecryptMessage(cipher []byte,  publicKey *PublicKey, nonce *Nonce) (Message, error)
+	DecryptBytes(cipher []byte,  publicKey *PublicKey, nonce *Nonce) ([]byte, error)
+
 }
 
 type encryptionHelper struct {
@@ -60,6 +66,22 @@ func (e encryptionHelper) EncryptBytes(content []byte, publicKey *PublicKey) (me
 		return nil, err
 	}
 	return e.EncryptBytesWithNonce(content, publicKey, nonce)
+}
+
+func (e encryptionHelper) DecryptBytes(content []byte,  publicKey *PublicKey, nonce *Nonce) ([]byte, error) {
+	result, ok := box.Open(nil, content, nonce, publicKey, e.secretKey)
+	if !ok {
+		return nil, errors.New("invalid box")
+	}
+	return result, nil
+}
+
+func (e encryptionHelper) DecryptMessage(cipher []byte,  publicKey *PublicKey, nonce *Nonce) (Message, error) {
+	plaintext, err := e.DecryptBytes(cipher, publicKey, nonce)
+	if err != nil {
+		return nil, err
+	}
+	return ReadMessage(plaintext)
 }
 
 func NewEncryptionHelper(secret string) (EncryptionHelper, error) {
@@ -99,6 +121,16 @@ func CreateNonce() (*Nonce, error) {
 	_, err := rand.Read(nonce[:])
 	return &nonce, err
 }
+
+func ReadHexNonce(hexNonce string) (*Nonce, error) {
+	if len(hexNonce) != 48 {
+		return nil, errWrongNonceLength
+	}
+	var nonce [24]byte
+	_, err := hex.Decode(nonce[:], []byte(hexNonce))
+	return &nonce, err
+}
+
 
 func checkPubKey(pk []byte) (*PublicKey, error) {
 	if len(pk) != cryptoBoxPublicKeyBytes {

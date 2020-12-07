@@ -22,9 +22,14 @@ func (nopKeyStore) SavePublicKey(threemaID string, publicKey *PublicKey) error {
 	return nil
 }
 
+// Create a new PublicKeyStore keystore that doesnt store keys
+func NewNOPKeyStore() PublicKeyStore {
+	return &nopKeyStore{}
+}
+
 func (c *EncryptedClient) keystore() PublicKeyStore  {
 	if c.PublicKeyStore == nil {
-		return nopKeyStore{}
+		c.PublicKeyStore = NewInMemoryStore()
 	}
 	return c.PublicKeyStore
 }
@@ -48,7 +53,7 @@ func NewEncryptedClient(threemaId string, apiSecret string, secretKeyHex string)
 }
 
 func (c *EncryptedClient) SendTextMessage(recipientID string, message string) (messageId string, err error) {
-	return c.SendMessage(recipientID, TextMessage{[]byte(message)})
+	return c.SendMessage(recipientID, &TextMessage{[]byte(message)})
 }
 
 type BlobReference struct {
@@ -69,7 +74,7 @@ func (c *EncryptedClient) UploadFile(reader io.Reader, sharedKey *SharedKey, non
 		return nil, err
 	}
 
-	box := EncryptWithSharedKey(content, sharedKey, nonce)
+	box := EncryptWithSharedKey(content, nonce, sharedKey)
 	blobID, err := c.Client.UploadBlob(box)
 	return &BlobReference{
 		BlobID: blobID,
@@ -265,4 +270,29 @@ func (c *EncryptedClient) SendFile(recipientID string, file File, description st
 	message.Description = description
 
 	return c.SendMessage(recipientID, message)
+}
+
+func (c *EncryptedClient) DecryptMessage(sender string, box []byte, nonce *Nonce) (Message, *PublicKey, error) {
+	publicKey, err := c.LookupPublicKey(sender)
+	if err != nil {
+		return nil, nil, err
+	}
+	msg, err :=  c.EncryptionHelper.DecryptMessage(box, publicKey, nonce)
+	return msg, publicKey, err
+}
+
+func (c *EncryptedClient) DownloadFile(blobID *BlobID, key *SharedKey) ([]byte, error) {
+	content, err := c.Client.DownloadBlob(blobID)
+	if err != nil {
+		return nil, err
+	}
+	return DecryptWithSharedSecret(content, FileNonce, key)
+}
+
+func (c *EncryptedClient) DownloadImage(blobID *BlobID, nonce *Nonce, publicKey *PublicKey) ([]byte, error) {
+	content, err := c.Client.DownloadBlob(blobID)
+	if err != nil {
+		return nil, err
+	}
+	return c.EncryptionHelper.DecryptBytes(content, publicKey, nonce)
 }
