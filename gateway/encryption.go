@@ -159,9 +159,6 @@ type EncryptedMessage struct {
 }
 
 func (e *encryptionHelper)  EncryptMessage(message Message, publicKey *PublicKey)  (*EncryptedMessage, error) {
-	plaintextBytes, err := message.Pack()
-	if err != nil {
-		return nil, err
-	}
+	plaintextBytes := PackMessage(message)
 	return e.EncryptBytes(plaintextBytes, publicKey)
 }

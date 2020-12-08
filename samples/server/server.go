@@ -53,7 +53,7 @@ func printMessages(client *gateway.EncryptedClient, values chan *callback.Encryp
 					*callbackValue.MessageID,
 					filename)
 			}
-		case *gateway.ImageMessage: {
+		case *gateway.ImageMessage:
 			{
 				imageMessage := message.(*gateway.ImageMessage)
 				fmt.Printf("[%x] Image from %s (%s)\n",
@@ -75,7 +75,65 @@ func printMessages(client *gateway.EncryptedClient, values chan *callback.Encryp
 					*callbackValue.MessageID,
 					filename)
 			}
-		}
+		case *gateway.DeliveryReceiptMessage:
+			{
+				delivery := message.(*gateway.DeliveryReceiptMessage)
+				var text string
+				switch delivery.DeliveryType {
+				case gateway.DeliveryRead:
+					text = "read"
+				case gateway.DeliveryAcknowledged:
+					text = "acknowledge +1"
+				case gateway.DeliveryDeclined:
+					text = "declines -1"
+				case gateway.DeliveryReceived:
+					text = "received"
+				default:
+					text = "???"
+				}
+				for _, messageId := range delivery.MessageIDs {
+					fmt.Printf("[%x] %s from %s\n", *messageId, text, callbackValue.From)
+				}
+			}
+		case *gateway.OtherMessage:
+			{
+				other := message.(*gateway.OtherMessage)
+				fmt.Printf("[%x] Received unknown from %s\n",
+					*callbackValue.MessageID,
+					callbackValue.From)
+				fmt.Printf("[%x] Type 0x%x - Content: %x\n",
+					*callbackValue.MessageID,
+					other.MessageType,
+					other.Content,
+				)
+				fmt.Printf("[%x] Content: %s\n",
+					*callbackValue.MessageID,
+					string(other.Content),
+				)
+			}
+		case *gateway.VoiceMessage:
+			{
+				voice := message.(*gateway.VoiceMessage)
+				fmt.Printf("[%x] Voice from %s - %ds unknown = %x\n",
+					*callbackValue.MessageID,
+					callbackValue.From,
+					voice.Seconds,
+					voice.Unknown)
+				content, err := client.DownloadFile(voice.BlobID, voice.SharedKey)
+				if err != nil {
+					logError("download voice failed: %s:", err)
+					continue
+				}
+				filename := hex.EncodeToString(callbackValue.MessageID[:]) + ".mp4"
+				if err = ioutil.WriteFile(filename, content, 0600); err != nil {
+					logError("save voice failed: %s", err)
+					continue
+				}
+				fmt.Printf("[%x] Voice saved to %s",
+					*callbackValue.MessageID,
+					filename)
+
+			}
 		default:
 			fmt.Printf("Other message received\n")
 		}

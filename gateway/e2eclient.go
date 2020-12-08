@@ -15,10 +15,10 @@ type EncryptedClient struct {
 }
 
 type nopKeyStore struct {}
-func (nopKeyStore) FetchPublicKey(threemaID string) *PublicKey {
+func (nopKeyStore) FetchPublicKey(string) *PublicKey {
 	return nil
 }
-func (nopKeyStore) SavePublicKey(threemaID string, publicKey *PublicKey) error {
+func (nopKeyStore) SavePublicKey(string, *PublicKey) error {
 	return nil
 }
 
@@ -76,6 +76,9 @@ func (c *EncryptedClient) UploadFile(reader io.Reader, sharedKey *SharedKey, non
 
 	box := EncryptWithSharedKey(content, nonce, sharedKey)
 	blobID, err := c.Client.UploadBlob(box)
+	if err != nil {
+		return nil, err
+	}
 	return &BlobReference{
 		BlobID: blobID,
 		Size:   uint32(len(content)),

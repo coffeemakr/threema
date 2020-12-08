@@ -14,14 +14,13 @@ import (
 	"strings"
 )
 
-
 type Client struct {
-	Secret         string
-	ID             string
+	Secret string
+	ID     string
 	Client *http.Client
 }
 
-func (c *Client) client() *http.Client{
+func (c *Client) client() *http.Client {
 	if c.Client != nil {
 		return c.Client
 	}
@@ -29,15 +28,15 @@ func (c *Client) client() *http.Client{
 }
 
 var (
-	ErrIDNotFound    = errors.New("threema identity not found")
-	ErrBlobNotFound = errors.New("blob not found")
-	ErrBadSecret     = errors.New("api secret or identity is incorrect")
-	ErrRequestFailed = errors.New("request failed")
-	ErrInvalidRecipient = errors.New("recipient identity is invalid or the account is not set up for end-to-end mode")
-	ErrMessageTooLong = errors.New("message is too long")
-	ErrBlobTooBig = errors.New("blob is too big")
+	ErrIDNotFound          = errors.New("threema identity not found")
+	ErrBlobNotFound        = errors.New("blob not found")
+	ErrBadSecret           = errors.New("api secret or identity is incorrect")
+	ErrRequestFailed       = errors.New("request failed")
+	ErrInvalidRecipient    = errors.New("recipient identity is invalid or the account is not set up for end-to-end mode")
+	ErrMessageTooLong      = errors.New("message is too long")
+	ErrBlobTooBig          = errors.New("blob is too big")
 	ErrInternalServerError = errors.New("temporary server error")
-	ErrMissingCredits = errors.New("missing credits")
+	ErrMissingCredits      = errors.New("missing credits")
 )
 
 // Lookup the public key of the Threema identity.
@@ -58,7 +57,7 @@ func (c *Client) LookupPublicKey(threemaID string) (pk *PublicKey, err error) {
 			if err == nil {
 				pk, err = ReadHexPublicKey(string(body[:]))
 			}
-			if closeErr := response.Body.Close(); closeErr != nil && err == nil{
+			if closeErr := response.Body.Close(); closeErr != nil && err == nil {
 				err = closeErr
 			}
 		}
@@ -94,7 +93,7 @@ func (c *Client) SendEncryptedMessage(to string, box *EncryptedMessage) (message
 			if err == nil {
 				messageId = string(bodyBytes[:])
 			}
-			if closeErr := resp.Body.Close(); closeErr != nil && err == nil{
+			if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
 				err = closeErr
 			}
 		}
@@ -113,7 +112,6 @@ func (c *Client) SendEncryptedMessage(to string, box *EncryptedMessage) (message
 	}
 	return
 }
-
 
 func randomBoundary() string {
 	var length = 32
@@ -137,7 +135,7 @@ func transformToMultipart(fileReader io.Reader) (string, io.Reader) {
 	return contentType, body
 }
 
-func ReadBlobID(hexString string) (*BlobID, error){
+func ReadBlobID(hexString string) (*BlobID, error) {
 	if len(hexString) != (blobIdBytes * 2) {
 		return nil, errors.New("invalid blob ID length")
 	}
@@ -146,9 +144,9 @@ func ReadBlobID(hexString string) (*BlobID, error){
 	return blobID, err
 }
 
-func readBlobID(reader io.Reader) (blobID *BlobID, err error){
-	var bodyBytes = make([]byte, 0, blobIdBytes * 2)
-	_, err = io.ReadAtLeast(reader, bodyBytes, blobIdBytes * 2)
+func readBlobID(reader io.Reader) (blobID *BlobID, err error) {
+	var bodyBytes = make([]byte, blobIdBytes*2)
+	_, err = io.ReadAtLeast(reader, bodyBytes, blobIdBytes*2)
 	if err != nil {
 		return
 	}
@@ -174,14 +172,12 @@ func (c *Client) UploadBlob(blob []byte) (blobID *BlobID, err error) {
 		return
 	}
 	//contentType, requestBody := transformToMultipart(blobBody)
-	request, err := http.NewRequest("POST", "https://msgapi.threema.ch/upload_blob", body)
+	request, err := http.NewRequest("POST", fmt.Sprintf("https://msgapi.threema.ch/upload_blob?secret=%s&from=%s",
+		url.QueryEscape(c.Secret),
+		url.QueryEscape(c.ID)), body)
 	if err != nil {
 		return
 	}
-	q := request.URL.Query()
-	q.Add("secret", c.Secret)
-	q.Add("from", c.ID)
-	request.URL.RawQuery = q.Encode()
 
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	resp, err = c.client().Do(request)
@@ -193,7 +189,7 @@ func (c *Client) UploadBlob(blob []byte) (blobID *BlobID, err error) {
 	case http.StatusOK:
 		{
 			blobID, err = readBlobID(resp.Body)
-			if closeErr := resp.Body.Close(); closeErr != nil && err == nil{
+			if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
 				err = closeErr
 			}
 		}
@@ -222,13 +218,14 @@ func (c *Client) DownloadBlob(blobID *BlobID) ([]byte, error) {
 		return nil, err
 	}
 	switch resp.StatusCode {
-	case http.StatusOK: {
-		result, err := ioutil.ReadAll(resp.Body)
-		if closeError := resp.Body.Close(); closeError != nil && err == nil {
-			err = closeError
+	case http.StatusOK:
+		{
+			result, err := ioutil.ReadAll(resp.Body)
+			if closeError := resp.Body.Close(); closeError != nil && err == nil {
+				err = closeError
+			}
+			return result, err
 		}
-		return result, err
-	}
 	case http.StatusUnauthorized:
 		err = ErrBadSecret
 	case http.StatusNotFound:
