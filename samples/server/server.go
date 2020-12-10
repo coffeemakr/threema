@@ -114,11 +114,10 @@ func printMessages(client *gateway.EncryptedClient, values chan *callback.Encryp
 		case *gateway.VoiceMessage:
 			{
 				voice := message.(*gateway.VoiceMessage)
-				fmt.Printf("[%x] Voice from %s - %ds unknown = %x\n",
+				fmt.Printf("[%x] Voice from %s (%d seconds)\n",
 					*callbackValue.MessageID,
 					callbackValue.From,
-					voice.Seconds,
-					voice.Unknown)
+					voice.Seconds)
 				content, err := client.DownloadFile(voice.BlobID, voice.SharedKey)
 				if err != nil {
 					logError("download voice failed: %s:", err)
