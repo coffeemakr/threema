@@ -216,9 +216,13 @@ func (d *DeliveryReceiptMessage) Unpack(content []byte) error {
 }
 
 type VoiceMessage struct {
+	// The length of the voice message in seconds
 	Seconds   uint16
+	// The ID of the blob
 	BlobID    *BlobID
-	Unknown   []byte
+	// Size of the blob size
+	Size      uint32
+	// SharedKey of the blob
 	SharedKey *SharedKey
 }
 
@@ -232,24 +236,19 @@ func (v *VoiceMessage) Unpack(content []byte) error {
 	content = content[2:]
 	copy(v.BlobID[:], content[:blobIdBytes])
 	content = content[blobIdBytes:]
-	v.Unknown = content[:2]
-	content = content[2:]
-	// always 1
-	//v.Number = binary.LittleEndian.Uint16(content)
-	content = content[2:]
+	v.Size = binary.LittleEndian.Uint32(content)
+	content = content[4:]
 	v.SharedKey = new(SharedKey)
 	copy(v.SharedKey[:], content[:cryptoBoxSharedKeyBytes])
 	return nil
 }
 
 func (v *VoiceMessage) PackContent() []byte {
-	content := make([]byte, 2, 2+blobIdBytes+cryptoBoxSharedKeyBytes+4)
+	content := make([]byte, 6+blobIdBytes+cryptoBoxSharedKeyBytes)
 	binary.LittleEndian.PutUint16(content, v.Seconds)
-	content = content[2:]
-	content = append(content, v.BlobID[:]...)
-	binary.LittleEndian.PutUint16(content, 1)
-	content = append(content, v.Unknown...)
-	content = append(content, v.SharedKey[:]...)
+	copy(content[2:], v.BlobID[:])
+	binary.LittleEndian.PutUint32(content[2+blobIdBytes:], v.Size)
+	copy(content[6+blobIdBytes:], v.SharedKey[:])
 	return content
 }
 
